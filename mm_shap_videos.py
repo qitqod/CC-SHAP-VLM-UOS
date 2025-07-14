@@ -14,14 +14,25 @@ import logging
 from PIL import Image
 
 
-def extract_frames_from_video(video_path, every_n=5, max_frames=16):
+def extract_frames_from_video(video_path, every_n=10, max_duration_mins=5):
     """Extracts frames from a video at a regular interval."""
     cap = cv2.VideoCapture(video_path)
+    print(cap)
+    print(video_path)
     frames = []
     count = 0
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
+
+    if duration > max_duration_mins * 60:
+        raise ValuError("Video is too long, I'm not doing this")
+
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret or len(frames) >= max_frames:
+        # if not ret or len(frames) >= max_frames:
+        #     break
+        if not ret:
             break
         if count % every_n == 0:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -29,7 +40,8 @@ def extract_frames_from_video(video_path, every_n=5, max_frames=16):
             frames.append(pil_img)
         count += 1
     cap.release()
-    logging.info(f"Extracted {len(frames)} frames from {video_path}")
+    # logging.info(f"Extracted {len(frames)} frames from {video_path}")
+    print(f"Extracted {len(frames)} frames from {video_path}\n")
 
     if len(frames) == 0:
         print("Couldn't extract any frames")
@@ -49,21 +61,12 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
     This is the equivalent function of explain_lm. It returns shap_values.
     Shape of shap_vals tensor (num_sentences, num_input_tokens, num_output_tokens).
     """
-    print("prompt = ")
-    print(prompt)
 
-    print("frames =")
-    print(raw_frames)
     inputs = processor(text=prompt, videos=[raw_frames], return_tensors='pt').to("cuda", torch.float16)
-
-    print(inputs.input_ids.shape)
-
-    print(len(raw_frames))
-    print(type(raw_frames[0]))
-    print(inputs.pixel_values_videos.shape)
 
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, min_new_tokens=1, do_sample=True)
 
+    # TODO: check this line
     output_ids = outputs[:, inputs.input_ids.shape[1]:].to(
         'cpu')  # select only the output ids without repeating the input again
     inputs.to('cpu')
@@ -76,6 +79,9 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
         """
         masked_X = x.clone()  # x.shape is (num_permutations, num_frames+text_length)
 
+        condition = (masked_X == 151647)
+        indices = torch.nonzero(condition, as_tuple=False)
+        mask[indices[:, 1]] = True
         frames_mask = torch.tensor(mask).unsqueeze(0)
         # set to zero the frames tokens we are going to mask
         frames_mask[:, -nb_text_tokens:] = True  # do not mask text tokens yet
@@ -84,7 +90,8 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
         # mask the text tokens (delete them)
         text_mask = torch.tensor(mask).unsqueeze(0)
         text_mask[:, :nb_frames] = True  # do not do anything to image tokens anymore
-        masked_X[~text_mask] = 583
+
+        masked_X[~text_mask] = 62
 
         return masked_X
 
@@ -99,6 +106,7 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
             masked_frames_token_ids = torch.tensor(x[:, :nb_frames])
             # output_ids.shape is (1, output_length); result.shape is (num_permutations, output_length)
             result = np.zeros((text_ids.shape[0], output_ids.shape[1]))
+            # TODO: check this
             batch_size = inputs.input_ids.shape[0]
 
             for i in range(batch_size):
@@ -159,6 +167,5 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
     mm_score = compute_mm_score(frames_token_ids.shape[1], shap_values)
 
     return shap_values, mm_score, p, nb_text_tokens
-
 
 
