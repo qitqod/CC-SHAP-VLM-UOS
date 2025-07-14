@@ -61,7 +61,7 @@ def explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=100, p=None
     This is the equivalent function of explain_lm. It returns shap_values.
     Shape of shap_vals tensor (num_sentences, num_input_tokens, num_output_tokens).
     """
-
+    
     inputs = processor(text=prompt, videos=[raw_frames], return_tensors='pt').to("cuda", torch.float16)
 
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, min_new_tokens=1, do_sample=True)
