@@ -1,40 +1,43 @@
-import sys
-
-sys.path.append('/content/CC-SHAP-VLM-UOS')
-
-from mm_shap_videos import explain_VLM, extract_frames_from_video, compute_mm_score
-
 import argparse
+import copy
 
+import numpy as np
+import torch
+from PIL import Image
+import shap
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 from transformers import BitsAndBytesConfig
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run multimodality analysis.")
-    parser.add_argument("--video_path", type=str, required=True, help="Path to input video")
+import cv2
+import logging
+from PIL import Image
 
-    args = parser.parse_args()
 
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+bnb_config = BitsAndBytesConfig(load_in_8bit=True)
 
+
+
+if 'model' not in globals():
     model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf",
     device_map="auto",
-    quantization_config=bnb_config)
+    quantization_config=bnb_config
+)
 
-    processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf")
-    raw_frames = extract_frames_from_video(args.video_path)
 
-    conversation = [
-        {
+processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf", use_fast=True)
 
-          "role": "user",
-          "content": [
-              {"type": "text", "text": "What is in the video?\n"},
-              {"type": "video"},
-            ],
-        },
-    ]
-    prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-    _, mm_score, _, _ = explain_VLM(prompt, raw_frames, model, processor, max_new_tokens=30)
+model.generation_config.pad_token_id = processor.tokenizer.pad_token_id
 
-    print("T-SHAP (text importance from 0 to 1) is " + str(mm_score))
+t_shap_sum = 0
+
+shorter_vids=filter_shorter_videos(from_file=True, coin_json_path="COIN_small.json", max_duration_s=120)
+paths, captions, task_names = get_paths_and_captions(shorter_vids)
+
+for k, caption, video_path in zip(range(len(paths)), captions, paths):
+
+  raw_frames = extract_frames_from_video(video_path, every_n=60)
+  _, mm_score, _ = explain_VLM(caption, raw_frames, model, processor, max_new_tokens=80)
+  print(mm_score)
+  t_shap_sum += mm_score
+
+print(f"T-SHAP_c %     : {t_shap_sum/len(paths)*100:.2f}  ")
